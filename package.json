@@ -18,6 +18,8 @@
     "@solid-primitives/resize-observer": "^2.0.11",
     "@unocss/reset": "^0.50.3",
     "astro": "^2.0.15",
+    "cli-progress": "^3.12.0",
+    "compute-cosine-similarity": "^1.0.0",
     "eventsource-parser": "^0.1.0",
     "fzf": "^0.5.1",
     "highlight.js": "^11.7.0",
@@ -28,6 +30,8 @@
     "markdown-it-highlightjs": "^4.0.1",
     "markdown-it-katex": "^2.0.3",
     "markdown-it-kbd": "^2.2.2",
+    "openai": "^3.2.1",
+    "papaparse": "^5.4.0",
     "solid-js": "^1.6.11"
   },
   "devDependencies": {

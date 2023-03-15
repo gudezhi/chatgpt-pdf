@@ -1,8 +1,9 @@
-import { Accessor, createSignal, JSXElement, Setter, Show } from "solid-js"
+import { Accessor, createSignal, JSXElement, onMount, Setter, Show } from "solid-js"
 import { toJpeg } from "html-to-image"
 import { copyToClipboard, dateFormat } from "~/utils"
 import type { ChatMessage } from "~/types"
 import type { Setting } from "~/system"
+import { PDFData } from "~/utils/global"
 
 export default function SettingAction(props: {
   setting: Accessor<Setting>
@@ -13,6 +14,35 @@ export default function SettingAction(props: {
 }) {
   const [shown, setShown] = createSignal(false)
   const [copied, setCopied] = createSignal(false)
+
+  onMount(() => {
+    // 获取按钮元素
+    const button = document.querySelector("#processPdf");
+    // 监听 pdfdataloaded 事件
+    addEventListener("pdfdataloaded", () => {
+      // 启用按钮
+      console.debug("pdfdataloaded");
+      button.disabled = false;
+    });
+  });
+  async function processPdf() {
+    // 获取按钮元素
+    const button = document.querySelector("#processPdf");
+    // 禁用按钮
+    button.disabled = true;
+    console.debug(PDFData());
+    const response = await fetch("/api/createEmbedding", {
+      method: "POST",
+      body: JSON.stringify({
+        pdfID: PDFData().pdfID,
+        messages: PDFData().text,
+        key: props.setting().openaiAPIKey,
+      }),
+    });
+    console.log(await response.json());
+    // 启用按钮
+    button.disabled = false;
+  }
   return (
     <div class="text-sm text-slate-7 dark:text-slate mb-2">
       <Show when={shown()}>
@@ -113,13 +143,21 @@ export default function SettingAction(props: {
         <hr class="mt-2 bg-slate-5 bg-op-15 border-none h-1px"></hr>
       </Show>
       <div class="mt-2 flex items-center justify-between">
-        <ActionItem
-          onClick={() => {
-            setShown(!shown())
-          }}
-          icon="i-carbon:settings"
-          label="设置"
-        />
+        <div class="flex">
+          <ActionItem
+            onClick={() => {
+              setShown(!shown())
+            }}
+            icon="i-carbon:settings"
+            label="设置"
+          />
+          <ActionItem
+            onClick={processPdf}
+            icon="i-carbon:document-pdf"
+            label="处理PDF"
+            id="processPdf"
+          />
+        </div>
         <div class="flex">
           <ActionItem
             onClick={exportJpg}
@@ -171,13 +209,13 @@ function SettingItem(props: {
   )
 }
 
-function ActionItem(props: { onClick: any; icon: string; label?: string }) {
+function ActionItem(props: { onClick: any; icon: string; label?: string, id?:string }) {
   return (
     <div
       class="flex items-center cursor-pointer mx-1 p-2 hover:bg-slate hover:bg-op-10 rounded text-1.2em"
       onClick={props.onClick}
     >
-      <button class={props.icon} title={props.label} />
+      <button class={props.icon} title={props.label} id={props.id}/>
     </div>
   )
 }
@@ -207,3 +245,4 @@ async function exportMD(messages: ChatMessage[]) {
       .join("\n\n\n\n")
   )
 }
+

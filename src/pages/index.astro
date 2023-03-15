@@ -8,6 +8,7 @@ import "katex/dist/katex.min.css"
 import "highlight.js/styles/atom-one-dark.css"
 import { parsePrompts } from "~/utils/parse"
 import { setting, message, resetContinuousDialogue } from "~/system"
+import PdfViewer from "~/components/PdfViewer.astro"
 const prompts = parsePrompts()
 const defaultMessage =
   import.meta.env.DEFAULT_MESSAGE || process.env.DEFAULT_MESSAGE || message
@@ -28,18 +29,24 @@ const reset =
 ---
 
 <Layout title="ChatGPT">
-  <main class="before">
-    <Header />
-    <Generator
-      env={{
-        defaultSetting,
-        defaultMessage,
-        resetContinuousDialogue: reset
-          ? resetContinuousDialogue
-          : !resetContinuousDialogue
-      }}
-      prompts={prompts}
-      client:visible
-    />
+  <main class="before container">
+    <div class="left">
+      <PdfViewer />
+    </div>
+    <div class="separator"></div>
+    <div class="right">
+      <Header />
+      <Generator
+        env={{
+          defaultSetting,
+          defaultMessage,
+          resetContinuousDialogue: reset
+            ? resetContinuousDialogue
+            : !resetContinuousDialogue
+        }}
+        prompts={prompts}
+        client:visible
+      />
+    </div>
   </main>
 </Layout>

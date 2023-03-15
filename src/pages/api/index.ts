@@ -4,6 +4,8 @@ import {
   ParsedEvent,
   ReconnectInterval
 } from "eventsource-parser"
+import { Configuration, OpenAIApi } from "openai"
+import { constructPrompt, PDFDataWithEmbedding } from "./createEmbedding"
 
 const apiKeys = (
   import.meta.env.OPENAI_API_KEY ||
@@ -41,6 +43,17 @@ export const post: APIRoute = async context => {
   if (pwd && pwd !== password) {
     return new Response("密码错误，请联系网站管理员")
   }
+
+  // build openai
+  const configuration = new Configuration({
+    apiKey: key,
+  });
+  const openai = new OpenAIApi(configuration);
+
+  // get prompt with pdf content
+  const promptWithPdf = await constructPrompt(messages[messages.length - 1].content,PDFDataWithEmbedding.pdfID,openai);
+  console.debug(promptWithPdf);
+  messages[messages.length - 1].content = promptWithPdf;
 
   const completion = await fetch(`https://${baseURL}/v1/chat/completions`, {
     headers: {
