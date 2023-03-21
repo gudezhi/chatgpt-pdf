@@ -28,7 +28,7 @@ export const post: APIRoute = async context => {
   const apiKey = apiKeys.length
     ? apiKeys[Math.floor(Math.random() * apiKeys.length)]
     : ""
-  let { messages, key = apiKey, temperature = 0.6, password } = body
+  let { messages, key = apiKey, temperature = 0.6, password, chatWithPdf } = body
 
   const encoder = new TextEncoder()
   const decoder = new TextDecoder()
@@ -44,16 +44,18 @@ export const post: APIRoute = async context => {
     return new Response("密码错误，请联系网站管理员")
   }
 
-  // build openai
-  const configuration = new Configuration({
-    apiKey: key,
-  });
-  const openai = new OpenAIApi(configuration);
+  // 根据选项是否自由对话
+  if (chatWithPdf) {
+    // build openai
+    const configuration = new Configuration({
+      apiKey: key,
+    });
+    const openai = new OpenAIApi(configuration);
 
-  // get prompt with pdf content
-  const promptWithPdf = await constructPrompt(messages[messages.length - 1].content,PDFDataWithEmbedding.pdfID,openai);
-  console.debug(promptWithPdf);
-  messages[messages.length - 1].content = promptWithPdf;
+    // get prompt with pdf content
+    const promptWithPdf = await constructPrompt(messages[messages.length - 1].content, PDFDataWithEmbedding.pdfID, openai);
+    messages[messages.length - 1].content = promptWithPdf;
+  }
 
   const completion = await fetch(`https://${baseURL}/v1/chat/completions`, {
     headers: {

@@ -1,16 +1,15 @@
+import { setting } from "./../../system";
 import cosineSimilarity from "compute-cosine-similarity";
 import { Configuration, OpenAIApi } from "openai";
 import type { APIRoute } from "astro";
 import * as fs from "fs";
 import * as Papa from "papaparse";
-import * as cliProgress from 'cli-progress';
+import * as cliProgress from "cli-progress";
 
+export const PDFDataWithEmbedding: { [key: string]: Contexts } = {};
 
-export const PDFDataWithEmbedding: { [key: string]: Contexts } = {}
-
-const MAX_SECTION_TOKEN_LEN = 500;
 const SEPARATOR = "\n* ";
-const separatorLen = 3
+const separatorLen = 3;
 
 const localEnv = import.meta.env.OPENAI_API_KEY;
 const vercelEnv = process.env.OPENAI_API_KEY;
@@ -36,37 +35,42 @@ interface Contexts {
 
 type DocumentSimilarities = [number, string][];
 
+var MAX_SECTION_TOKEN_LEN = setting.maxSectionTokenLen;
+
 export const post: APIRoute = async (context) => {
   const body = await context.request.json();
   const apiKey = apiKeys.length ? apiKeys[Math.floor(Math.random() * apiKeys.length)] : "";
-  let { messages, key = apiKey, pdfID } = body;
+  let { messages, key = apiKey, pdfID, rebuildEmbeddings, maxSectionTokenLen } = body;
+
+  MAX_SECTION_TOKEN_LEN = maxSectionTokenLen;
 
   // for debug
   // messages = messages.slice(0, 4);
 
   const dataPath = "data/" + pdfID + ".csv";
-  // 这里的持久化方法待改进
-  if (PDFDataWithEmbedding.pdfID && Object.keys(PDFDataWithEmbedding.pdfID).length === messages.length) {
-    // 内存中已经存在数据
-    console.debug("data exists:" + pdfID)
-    return {
-      body: JSON.stringify({
-        success: true,
-        message: "ok",
-        // data: PDFDataWithEmbedding.pdfID,
-      }),
-    }
-  } else {
-    // 存在持久化数据
-    if (fs.existsSync(dataPath)) {
-      console.debug("file exists:" + dataPath);
-      PDFDataWithEmbedding.pdfID = readContextsFromCsv(dataPath);
+
+  if (!rebuildEmbeddings) {
+    // 这里的持久化方法待改进
+    if (PDFDataWithEmbedding.pdfID && Object.keys(PDFDataWithEmbedding.pdfID).length === messages.length) {
+      // 内存中已经存在数据
+      console.debug("data exists:" + pdfID);
       return {
         body: JSON.stringify({
           success: true,
           message: "ok",
-          // data: PDFDataWithEmbedding.pdfID,
         }),
+      };
+    } else {
+      // 存在持久化数据
+      if (fs.existsSync(dataPath)) {
+        console.debug("file exists:" + dataPath);
+        PDFDataWithEmbedding.pdfID = readContextsFromCsv(dataPath);
+        return {
+          body: JSON.stringify({
+            success: true,
+            message: "ok",
+          }),
+        };
       }
     }
   }
@@ -81,17 +85,27 @@ export const post: APIRoute = async (context) => {
   });
   const openai = new OpenAIApi(configuration);
 
-  const res = await computeDocEmbeddings(messages, openai);
-  PDFDataWithEmbedding.pdfID = res
-  writeContextsToCsv(res, dataPath);
+  const stream = new ReadableStream({
+    async start(controller) {
+      // for (let i = 0; i < 5; i++) {
+      //   progressCallback(controller,(+i+1)*20);
+      //   await new Promise(resolve => setTimeout(resolve, 500));
+      // }
 
-  return {
-    body: JSON.stringify({
-      success: true,
-      message: "ok",
-      data: "Now you can chat with pdf",
-    }),
-  };
+      // 在进度更新回调函数中将进度信息写入流
+      const progressCallback = (progress: number) => {
+        controller.enqueue(`${progress}\n`);
+        // console.debug("Progress: " + progress);
+      };
+
+      const res = await computeDocEmbeddings(messages, openai, progressCallback);
+      PDFDataWithEmbedding.pdfID = res;
+      writeContextsToCsv(res, dataPath);
+      controller.close();
+    },
+  });
+
+  return new Response(stream);
 };
 
 export async function getEmbedding(messages: string, openai: OpenAIApi) {
@@ -116,7 +130,11 @@ export async function getEmbedding(messages: string, openai: OpenAIApi) {
   return result;
 }
 
-export async function computeDocEmbeddings(df: DataFrame[], openai: OpenAIApi) {
+export async function computeDocEmbeddings(
+  df: DataFrame[],
+  openai: OpenAIApi,
+  progressCallback: (progress: number) => void
+) {
   const result: Contexts = {};
   // 创建一个新的进度条实例
   const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
@@ -133,6 +151,8 @@ export async function computeDocEmbeddings(df: DataFrame[], openai: OpenAIApi) {
     };
     // 更新进度条
     progressBar.update(idx + 1);
+    // 调用进度更新回调函数更新进度信息
+    progressCallback(Math.floor(((idx + 1) / df.length) * 100));
   }
   // 停止进度条
   progressBar.stop();
@@ -162,7 +182,7 @@ function readContextsFromCsv(filePath: string): Contexts {
   const data = Papa.parse(csvString).data;
   // 创建 Contexts 对象
   const contexts: Contexts = {};
-  console.debug(data);
+  // console.debug(data);
   // 遍历数据行（跳过表头）
   for (const [idx, content, pageNum, content_tokens, content_length, arr] of data.slice(1)) {
     // 添加到 Contexts 对象中
@@ -177,18 +197,28 @@ function readContextsFromCsv(filePath: string): Contexts {
   return contexts;
 }
 
-async function orderDocumentSectionsByQuerySimilarity(query: string, contexts: Contexts, openai: OpenAIApi): Promise<DocumentSimilarities> {
+async function orderDocumentSectionsByQuerySimilarity(
+  query: string,
+  contexts: Contexts,
+  openai: OpenAIApi
+): Promise<DocumentSimilarities> {
   const queryEmbedding = await getEmbedding(query, openai);
 
   const documentSimilarities = Object.entries(contexts)
-    .map(([key, { arr: docEmbedding }]) => [cosineSimilarity(queryEmbedding.arr, docEmbedding), key] as [number, string])
+    .map(
+      ([key, { arr: docEmbedding }]) => [cosineSimilarity(queryEmbedding.arr, docEmbedding), key] as [number, string]
+    )
     .sort(([similarityA], [similarityB]) => similarityB - similarityA);
 
   return documentSimilarities;
 }
 
 export async function constructPrompt(question: string, contextEmbeddings: Contexts, openai: OpenAIApi) {
-  const mostRelevantDocumentSections = await orderDocumentSectionsByQuerySimilarity(question, contextEmbeddings, openai);
+  const mostRelevantDocumentSections = await orderDocumentSectionsByQuerySimilarity(
+    question,
+    contextEmbeddings,
+    openai
+  );
 
   let chosenSections: string[] = [];
   let chosenSectionsLen = 0;
@@ -202,13 +232,13 @@ export async function constructPrompt(question: string, contextEmbeddings: Conte
   // ];
 
   for (const [_, key] of mostRelevantDocumentSections) {
-    const documentSection = contextEmbeddings[key]
+    const documentSection = contextEmbeddings[key];
     chosenSectionsLen += +documentSection.content_tokens + separatorLen;
     if (chosenSectionsLen > MAX_SECTION_TOKEN_LEN) {
       break;
     }
 
-    chosenSections.push(SEPARATOR + documentSection.content.replace('\n', ' '));
+    chosenSections.push(SEPARATOR + documentSection.content.replace("\n", " "));
     chosenSectionsIndexes.push(key);
   }
 
@@ -216,5 +246,5 @@ export async function constructPrompt(question: string, contextEmbeddings: Conte
 
   const header = `Answer the question as truthfully as possible using the provided context, and if the answer is not contained within the text below, say "I don't know", and always speak chinese.\n\nContext:\n`;
 
-  return header + chosenSections.join('') + '\n\n Q: ' + question + '\n A:';
+  return header + chosenSections.join("") + "\n\n Q: " + question + "\n A:";
 }

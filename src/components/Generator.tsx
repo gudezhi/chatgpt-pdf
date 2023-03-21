@@ -221,7 +221,8 @@ export default function (props: {
           : [message],
         key: setting().openaiAPIKey,
         temperature: setting().openaiAPITemperature / 100,
-        password: setting().password
+        password: setting().password,
+        chatWithPdf: setting().chatWithPdf,
       }),
       signal: controller.signal
     })
@@ -323,7 +324,7 @@ export default function (props: {
   }
 
   return (
-    <div ref={containerRef!}>
+    <div ref={containerRef!} style="height: calc(100% + 400px);">
       <div
         id="message-container"
         style={{

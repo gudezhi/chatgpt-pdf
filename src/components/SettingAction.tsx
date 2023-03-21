@@ -3,7 +3,7 @@ import { toJpeg } from "html-to-image"
 import { copyToClipboard, dateFormat } from "~/utils"
 import type { ChatMessage } from "~/types"
 import type { Setting } from "~/system"
-import { PDFData } from "~/utils/global"
+import { PDFData, setPDFData } from "~/utils/global"
 
 export default function SettingAction(props: {
   setting: Accessor<Setting>
@@ -14,32 +14,109 @@ export default function SettingAction(props: {
 }) {
   const [shown, setShown] = createSignal(false)
   const [copied, setCopied] = createSignal(false)
+  const [showModal, setShowModal] = createSignal(false)
+  const [progress, setProgress] = createSignal(0)
+  const [pdfDocument,setPdfDocument] = createSignal(null)
 
+  // 监听 pagesloaded 事件，并启用按钮，获得pdf
   onMount(() => {
-    // 获取按钮元素
     const button = document.querySelector("#processPdf");
-    // 监听 pdfdataloaded 事件
-    addEventListener("pdfdataloaded", () => {
-      // 启用按钮
-      console.debug("pdfdataloaded");
-      button.disabled = false;
-    });
+    PDFViewerApplication.initializedPromise.then(function () {
+      PDFViewerApplication.eventBus.on("pagesloaded", async function (e) {
+        console.debug("pagesloaded");
+        setPdfDocument(e.source.pdfDocument);
+        button.disabled = false;
+      })
+    })
   });
+
+  // 文本切片
+  const slicePdfText = async () => {
+    
+    const pdfDoc = pdfDocument();
+    const pdfID = pdfDoc.fingerprints[0];
+
+    // 创建一个空数组用来存储提取的文本
+    const texts = [];
+    // from 1 to pagesCount,get every page's content
+    for (let index = 1; index <= pdfDoc.numPages; index++) {
+      const page = await pdfDoc.getPage(index);
+      const text = await page.getTextContent();
+      for (let i = 0; i < text.items.length; i++) {
+        // console.debug(text.items[i].str);
+        texts.push({ str: text.items[i].str, pageNum: index });
+      }
+    }
+
+    // 创建一个空数组用来存储最终结果
+    const result = [];
+    // 定义一个变量用来存储当前正在处理的文本
+    let currentText = "";
+    // 定义一个索引变量用来遍历 texts 数组
+    let index = 0;
+    // 遍历 texts 数组
+    while (index < texts.length) {
+      // 将当前文本添加到 currentText 中
+      currentText += texts[index].str + " ";
+      
+      if (currentText.length >= props.setting().newLength) {
+        result.push({ str: currentText, pageNum: texts[index].pageNum });
+        currentText = currentText.slice(-props.setting().overlap);
+      }
+      // 索引加一，继续遍历下一个元素
+      index++;
+    }
+    // 如果 currentText 中还有剩余的字符，则将其添加到 result 数组中
+    if (currentText) {
+      result.push({ str: currentText, pageNum: texts[texts.length - 1].pageNum });
+    }
+    setPDFData({
+      pdfID: pdfID,
+      text: result
+    });
+  };
+
+
+
   async function processPdf() {
-    // 获取按钮元素
-    const button = document.querySelector("#processPdf");
     // 禁用按钮
+    const button = document.querySelector("#processPdf");
     button.disabled = true;
-    console.debug(PDFData());
+    setShowModal(true);
+  
+    // 处理PDF文本并切片
+    await slicePdfText();
+  
+    // 将切片后的文本创建Embeddings
     const response = await fetch("/api/createEmbedding", {
       method: "POST",
       body: JSON.stringify({
         pdfID: PDFData().pdfID,
         messages: PDFData().text,
+        maxSectionTokenLen: props.setting().maxSectionTokenLen,
         key: props.setting().openaiAPIKey,
+        rebuildEmbeddings: props.setting().rebuildEmbeddings,
       }),
     });
-    console.log(await response.json());
+  
+    // 创建一个可读流来处理服务器发送的进度更新
+    const reader = response?.body?.getReader();
+    const decoder = new TextDecoder("utf-8");
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      const message = decoder.decode(value, { stream: true });
+      // console.debug(message);
+
+      // 处理消息，更新前端进度条
+      setProgress(Number(message));
+    }
+    // 展示最后一次解析的进度信息
+    setProgress(100);
+  
     // 启用按钮
     button.disabled = false;
   }
@@ -140,7 +217,113 @@ export default function SettingAction(props: {
             <div class="w-9 h-5 bg-slate bg-op-15 peer-focus:outline-none peer-focus:ring-0  rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-slate"></div>
           </label>
         </SettingItem>
+        <SettingItem
+          icon="i-carbon:number-9"
+          label="依据PDF内容对话(需要预处理PDF)"
+        >
+          <label class="relative inline-flex items-center cursor-pointer ml-1">
+            <input
+              type="checkbox"
+              checked={props.setting().chatWithPdf}
+              class="sr-only peer"
+              onChange={e => {
+                props.setSetting({
+                  ...props.setting(),
+                  chatWithPdf: (e.target as HTMLInputElement).checked
+                })
+              }}
+            />
+            <div class="w-9 h-5 bg-slate bg-op-15 peer-focus:outline-none peer-focus:ring-0  rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-slate"></div>
+          </label>
+        </SettingItem>
+        <SettingItem
+          icon="i-carbon:number-9"
+          label="重新生成Embeddings"
+        >
+          <label class="relative inline-flex items-center cursor-pointer ml-1">
+            <input
+              type="checkbox"
+              checked={props.setting().rebuildEmbeddings}
+              class="sr-only peer"
+              onChange={e => {
+                props.setSetting({
+                  ...props.setting(),
+                  rebuildEmbeddings: (e.target as HTMLInputElement).checked
+                })
+              }}
+            />
+            <div class="w-9 h-5 bg-slate bg-op-15 peer-focus:outline-none peer-focus:ring-0  rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-slate"></div>
+          </label>
+        </SettingItem>
+        <SettingItem icon="i-carbon:number-9" label="关联信息最大token长度">
+          <input
+            type="number" 
+            value={props.setting().maxSectionTokenLen}
+            class="max-w-150px ml-1em px-1 text-slate-7 dark:text-slate rounded-sm bg-slate bg-op-15 focus:bg-op-20 ocus:ring-0 focus:outline-none"
+            onInput={e => {
+              props.setSetting({
+                ...props.setting(),
+                maxSectionTokenLen: Number((e.target as HTMLInputElement).value)
+              })
+            }}
+          />
+        </SettingItem>
+        <SettingItem icon="i-carbon:number-9" label="PDF文本切片长度">
+          <input
+            type="number"
+            value={props.setting().newLength}
+            class="max-w-150px ml-1em px-1 text-slate-7 dark:text-slate rounded-sm bg-slate bg-op-15 focus:bg-op-20 ocus:ring-0 focus:outline-none"
+            onInput={e => {
+              props.setSetting({
+                ...props.setting(),
+                newLength: Number((e.target as HTMLInputElement).value)
+              })
+            }}
+          />
+        </SettingItem>
+        <SettingItem icon="i-carbon:number-9" label="PDF文本切片重叠">
+          <input
+            type="number"
+            value={props.setting().overlap}
+            class="max-w-150px ml-1em px-1 text-slate-7 dark:text-slate rounded-sm bg-slate bg-op-15 focus:bg-op-20 ocus:ring-0 focus:outline-none"
+            onInput={e => {
+              props.setSetting({
+                ...props.setting(),
+                overlap: Number((e.target as HTMLInputElement).value)
+              })
+            }}
+          />
+        </SettingItem>
         <hr class="mt-2 bg-slate-5 bg-op-15 border-none h-1px"></hr>
+      </Show>
+      <Show when={showModal()}>
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div class="bg-white rounded-md p-6">
+            <h3 class="text-lg font-bold mb-4">Processing PDF</h3>
+            <div class="relative w-full h-4 bg-gray-200 rounded">
+              <div
+                class="absolute top-0 left-0 h-4 bg-blue-500 rounded"
+                style={`width: ${progress()}%`}
+              ></div>
+            </div>
+            <p class="text-center mt-4">
+              {progress() < 100
+                ? "Please wait while we process your PDF..."
+                : "PDF processing complete!"}
+            </p>
+            <button
+              class="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 focus:outline-none"
+              onClick={() => {
+                setShowModal(false);
+                if (progress() === 100) {
+                  setProgress(0);
+                }
+              }}
+            >
+              {progress() < 100 ? "Cancel" : "Close"}
+            </button>
+          </div>
+        </div>
       </Show>
       <div class="mt-2 flex items-center justify-between">
         <div class="flex">

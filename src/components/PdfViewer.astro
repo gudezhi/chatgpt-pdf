@@ -3,65 +3,6 @@
 <script src="/build/pdf.js" is:inline></script>
 <script src="/viewer.js" is:inline></script>
 <script src="/intergrate.js" is:inline></script>
-<script>
-  import { PDFData, setPDFData } from "~/utils/global";
-
-  const newLength = 300; // 合并后字符串长度
-  const overlap = 50; // 字符串重叠长度
-
-  PDFViewerApplication.initializedPromise.then(function () {
-    // 在此处添加对 pagesloaded 事件的监听
-    PDFViewerApplication.eventBus.on("pagesloaded", async function (e) {
-      // console.debug(e);
-      // console.debug(e.source.pdfDocument);
-      console.debug("PDF 页面已加载完成");
-      // console.debug(pdfDoc.fingerprints[0]);
-
-      const pdfDoc = e.source.pdfDocument;
-      const pdfID = pdfDoc.fingerprints[0];
-
-      // 创建一个空数组用来存储提取的文本
-      const texts = [];
-      // from 1 to pagesCount,get every page's content
-      for (let index = 1; index <= e.pagesCount; index++) {
-        const page = await pdfDoc.getPage(index);
-        const text = await page.getTextContent();
-        for (let i = 0; i < text.items.length; i++) {
-          // console.debug(text.items[i].str);
-          texts.push({ str: text.items[i].str, pageNum: index });
-        }
-      }
-
-      // 创建一个空数组用来存储最终结果
-      const result = [];
-      // 定义一个变量用来存储当前正在处理的文本
-      let currentText = "";
-      // 定义一个索引变量用来遍历 texts 数组
-      let index = 0;
-      // 遍历 texts 数组
-      while (index < texts.length) {
-        // 将当前文本添加到 currentText 中
-        currentText += texts[index].str + " ";
-        
-        if (currentText.length >= newLength) {
-          result.push({ str: currentText, pageNum: texts[index].pageNum });
-          currentText = currentText.slice(-overlap);
-        }
-        // 索引加一，继续遍历下一个元素
-        index++;
-      }
-      // 如果 currentText 中还有剩余的字符，则将其添加到 result 数组中
-      if (currentText) {
-        result.push({ str: currentText, pageNum: texts[texts.length - 1].pageNum });
-      }
-      setPDFData({
-        pdfID: pdfID,
-        text: result
-      });
-      dispatchEvent(new CustomEvent("pdfdataloaded"));
-    });
-  });
-</script>
 
 <style>
 #outerContainer {
@@ -787,5 +728,5 @@
     </div>
   </div>
   <div id="printContainer"></div>
-  <input type="file" id="fileInput" class="hidden" />
+  <input type="file" id="fileInput" accept=".pdf" class="hidden" />
 </div>

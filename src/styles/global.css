@@ -49,17 +49,11 @@ main {
 
 .left {
   flex: 6;
-
-  /* overflow-y: scroll; */
 }
 
 .right {
   flex: 0 0 640px;
   overflow-y: scroll;
-}
-
-#message-container {
-  height: 100vh;
 }
 
 .separator {
